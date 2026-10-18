@@ -100,6 +100,11 @@ apt (needs gcc-12 host compiler).
   (~30% load) Turbo q5_0 measured ~720 ms instead of ~540 ms.
 - Daemon end-to-end (CUDA): mic start latency 1–7 ms after the request;
   silence-only recording discarded in ~11 ms.
+- First real use (2026-10-18, Bluetooth headset mic, Turbo q5_0, CUDA):
+  stop → text 563–688 ms for 3–14 s dictations; mic start 9–19 ms; VAD is
+  38–111 ms of that (grows with length) → next optimization target.
+- Dev machine has no wired mic; default input fell back to a speaker
+  monitor before the headset was connected (digital-silence warning added).
 - VAD costs ~26 ms per 5 s of audio → run it incrementally while recording.
 - Rejected: shrinking `audio_ctx` to the audio length (Turbo loops/hallucinates
   on short clips); `GGML_VK_*` toggles (no effect).
@@ -116,8 +121,9 @@ apt (needs gcc-12 host compiler).
 ## Roadmap
 
 1. Phase 1 (core loop): DONE in code — daemon, triggers, paste, overlay,
-   tray, config, IPC. Pending: user testing of hotkeys/paste/overlay in a
-   real session; run VAD incrementally during recording (~30 ms).
+   tray, config, IPC. Verified by the user: tray toggle → record →
+   transcribe. Pending: run VAD incrementally during recording (saves
+   40–110 ms); user check of hotkey, paste and overlay.
 2. Phase 2: GTK history (SQLite FTS5, playback, re-transcribe, retention),
    drag-and-drop queue, onboarding, model downloads, streaming transcription.
 3. Phase 3: Wayland (portal shortcuts, libei/wtype, layer-shell), vocabulary
