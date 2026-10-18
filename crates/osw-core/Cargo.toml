@@ -1,0 +1,23 @@
+[package]
+name = "osw-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["vulkan"]
+vulkan = ["whisper-rs/vulkan"]
+cuda = ["whisper-rs/cuda"]
+
+[dependencies]
+whisper-rs = { version = "0.16", features = ["log_backend"] }
+symphonia = { version = "0.5", default-features = false, features = ["wav", "pcm", "mp3", "flac", "ogg", "vorbis", "isomp4", "aac", "alac", "adpcm"] }
+rubato = "0.16"
+autocorrect = "2.14"
+serde = { version = "1", features = ["derive"] }
+directories = "6"
+thiserror = "2"
+log.workspace = true
+
+[dev-dependencies]
+hound = "3.5"

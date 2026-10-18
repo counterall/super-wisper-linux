@@ -1,0 +1,4 @@
+target/
+*.bin
+!crates/osw-core/assets/*.bin
+target-cuda/

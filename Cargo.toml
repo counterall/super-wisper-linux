@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["crates/osw-core", "crates/osw-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+osw-core = { path = "crates/osw-core", default-features = false }
+anyhow = "1"
+log = "0.4"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

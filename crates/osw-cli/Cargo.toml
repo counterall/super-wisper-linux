@@ -1,0 +1,21 @@
+[package]
+name = "osw-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "osw"
+path = "src/main.rs"
+
+[features]
+default = ["vulkan"]
+vulkan = ["osw-core/vulkan"]
+cuda = ["osw-core/cuda"]
+
+[dependencies]
+osw-core.workspace = true
+anyhow.workspace = true
+log.workspace = true
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
