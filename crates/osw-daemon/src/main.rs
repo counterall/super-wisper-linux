@@ -4,6 +4,7 @@
 
 mod capture;
 mod conflicts;
+mod history;
 mod input;
 mod ipc;
 mod keys;
@@ -12,22 +13,24 @@ mod paste;
 mod tray;
 mod worker;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use crossbeam_channel as cb;
 use osw_core::config::Config;
 use osw_core::engine::CancelToken;
+use osw_core::history::{self as store, Entry, Status};
 use osw_core::{text, EngineOptions, SAMPLE_RATE};
 
 use capture::Capture;
+use history::HistoryCmd;
 use input::{Input, InputEvent};
 use ipc::IpcCmd;
 use overlay::{OverlayCmd, OverlayState};
 use paste::PasteCmd;
 use tray::{TrayCmd, TrayStatus};
-use worker::{Job, WorkerCmd, WorkerEvent};
+use worker::{Audio, Job, WorkerCmd, WorkerEvent};
 
 /// Holding the trigger at least this long means "record while held";
 /// a shorter press toggles (matches the macOS app).
@@ -44,16 +47,29 @@ enum Event {
     Worker(WorkerEvent),
 }
 
+/// How often old history entries are pruned at most.
+const PRUNE_INTERVAL: Duration = Duration::from_secs(3600);
+
 struct Recording {
     started_at: Instant,
+    created_at_ms: i64,
     trigger_held: bool,
 }
 
+/// A dictation waiting for its text; shown by the overlay, cancellable.
 struct Pending {
     id: u64,
     cancel: CancelToken,
     stopped_at: Instant,
+    created_at_ms: i64,
     audio_secs: f32,
+}
+
+/// A file or history entry being (re)transcribed for the history window.
+struct Background {
+    entry_id: String,
+    /// The audio must be stored when the job finishes (imported files).
+    store_audio: bool,
 }
 
 struct App {
@@ -67,6 +83,9 @@ struct App {
     tray: Option<ksni::blocking::Handle<tray::Tray>>,
     recording: Option<Recording>,
     pending: VecDeque<Pending>,
+    background: HashMap<u64, Background>,
+    history: cb::Sender<HistoryCmd>,
+    last_prune: Option<Instant>,
     confirm_cancel_until: Option<Instant>,
     next_id: u64,
     model_name: String,
@@ -79,13 +98,13 @@ fn main() -> Result<()> {
     log::info!("config: {}", Config::path().display());
 
     let (tx, rx) = cb::unbounded::<Event>();
-    {
-        let tx = tx.clone();
-        ipc::listen(move |c| drop(tx.send(Event::Ipc(c))))?;
-    }
-
     let capture = Capture::spawn(config.microphone.clone(), config.keep_mic_warm)
         .context("starting microphone capture (PipeWire)")?;
+    {
+        let tx = tx.clone();
+        ipc::listen(capture.microphones_handle(), move |c| drop(tx.send(Event::Ipc(c))))?;
+    }
+    let history = history::spawn().context("opening the history database")?;
     let input = {
         let tx = tx.clone();
         match Input::spawn(&config.trigger, move |e| drop(tx.send(Event::Input(e)))) {
@@ -121,12 +140,16 @@ fn main() -> Result<()> {
         tray,
         recording: None,
         pending: VecDeque::new(),
+        background: HashMap::new(),
+        history,
+        last_prune: None,
         confirm_cancel_until: None,
         next_id: 0,
         model_name: String::new(),
         silence_warned_at: None,
     };
     app.load_model();
+    app.prune_history();
     let result = app.run(&rx);
     ipc::remove_socket();
     for p in &app.pending {
@@ -167,6 +190,8 @@ impl App {
                     IpcCmd::Cancel => self.cancel_all(),
                     IpcCmd::Reload => self.reload(),
                     IpcCmd::Quit => return Ok(()),
+                    IpcCmd::TranscribeFile(path) => self.transcribe_file(path),
+                    IpcCmd::Retranscribe(entry_id) => self.retranscribe(entry_id),
                 },
                 Event::Tray(cmd) => match cmd {
                     TrayCmd::Toggle => self.toggle(),
@@ -179,6 +204,7 @@ impl App {
                         let _ = std::process::Command::new("xdg-open").arg(Config::path()).spawn();
                     }
                     TrayCmd::Reload => self.reload(),
+                    TrayCmd::OpenWindow => open_window(),
                     TrayCmd::Quit => return Ok(()),
                 },
                 Event::Worker(WorkerEvent::Loaded(result)) => match result {
@@ -191,7 +217,22 @@ impl App {
                         notify(&format!("Could not load the Whisper model: {e}"));
                     }
                 },
-                Event::Worker(WorkerEvent::Done { id, result }) => self.transcribed(id, result),
+                Event::Worker(WorkerEvent::Progress { id, progress }) => {
+                    if let Some(bg) = self.background.get(&id) {
+                        let _ = self.history.send(HistoryCmd::SetStatus {
+                            id: bg.entry_id.clone(),
+                            status: Status::Transcribing,
+                            progress,
+                        });
+                    }
+                }
+                Event::Worker(WorkerEvent::Done { id, samples, result }) => {
+                    if let Some(bg) = self.background.remove(&id) {
+                        self.background_done(bg, samples, result);
+                    } else {
+                        self.transcribed(id, samples, result);
+                    }
+                }
             }
         }
     }
@@ -254,7 +295,11 @@ impl App {
     fn start_recording(&mut self, trigger_held: bool) {
         self.capture.start();
         let _ = self.worker.send(WorkerCmd::Prepare);
-        self.recording = Some(Recording { started_at: Instant::now(), trigger_held });
+        self.recording = Some(Recording {
+            started_at: Instant::now(),
+            created_at_ms: store::now_ms(),
+            trigger_held,
+        });
         self.refresh_indicators();
     }
 
@@ -310,15 +355,22 @@ impl App {
         };
         let _ = self.worker.send(WorkerCmd::Transcribe(Job {
             id,
-            samples: recorded.samples,
+            audio: Audio::Samples(recorded.samples),
             settings,
             cancel: cancel.clone(),
+            background: false,
         }));
-        self.pending.push_back(Pending { id, cancel, stopped_at, audio_secs });
+        self.pending.push_back(Pending {
+            id,
+            cancel,
+            stopped_at,
+            created_at_ms: rec.created_at_ms,
+            audio_secs,
+        });
         self.refresh_indicators();
     }
 
-    fn transcribed(&mut self, id: u64, result: Result<osw_core::Transcription, String>) {
+    fn transcribed(&mut self, id: u64, samples: Vec<f32>, result: Result<osw_core::Transcription, String>) {
         let Some(pos) = self.pending.iter().position(|p| p.id == id) else { return };
         let job = self.pending.remove(pos).unwrap();
         self.refresh_indicators();
@@ -337,7 +389,7 @@ impl App {
                     t.text
                 );
                 if t.text.is_empty() {
-                    return;
+                    return; // nothing was said: not worth keeping
                 }
                 let c = &self.config;
                 if c.auto_paste || c.keep_in_clipboard {
@@ -347,13 +399,113 @@ impl App {
                         keep_in_clipboard: c.keep_in_clipboard,
                     });
                 }
+                self.save_dictation(&job, samples, Ok(t.text));
             }
             Err(e) if e.contains("cancelled") => {}
             Err(e) => {
                 log::error!("transcription failed: {e}");
                 notify(&format!("Transcription failed: {e}"));
+                // Keep the audio so the dictation can be re-transcribed.
+                self.save_dictation(&job, samples, Err(e));
             }
         }
+    }
+
+    // --- history ----------------------------------------------------------
+
+    fn save_dictation(&mut self, job: &Pending, samples: Vec<f32>, result: Result<String, String>) {
+        if !self.config.save_history {
+            return;
+        }
+        let entry_id = store::new_id();
+        let (status, text, error) = match result {
+            Ok(text) => (Status::Done, text, None),
+            Err(e) => (Status::Failed, String::new(), Some(e)),
+        };
+        let _ = self.history.send(HistoryCmd::Insert(Entry {
+            id: entry_id.clone(),
+            created_at: job.created_at_ms,
+            duration_secs: job.audio_secs,
+            text,
+            status,
+            progress: if status == Status::Done { 1.0 } else { 0.0 },
+            model: self.model_name.clone(),
+            source_name: None,
+            error,
+        }));
+        let _ = self.history.send(HistoryCmd::SaveAudio { id: entry_id, samples });
+        self.prune_history();
+    }
+
+    fn prune_history(&mut self) {
+        let Some(days) = self.config.history_retention_days else { return };
+        if self.last_prune.is_some_and(|t| t.elapsed() < PRUNE_INTERVAL) {
+            return;
+        }
+        self.last_prune = Some(Instant::now());
+        let _ = self.history.send(HistoryCmd::Prune { days });
+    }
+
+    fn settings(&self) -> osw_core::TranscribeSettings {
+        match self.config.model_path() {
+            Some(model) => self.config.transcription_for(&model),
+            None => self.config.transcription.clone(),
+        }
+    }
+
+    fn queue_background(&mut self, entry_id: String, audio: Audio, store_audio: bool) {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.background.insert(id, Background { entry_id, store_audio });
+        let _ = self.worker.send(WorkerCmd::Transcribe(Job {
+            id,
+            audio,
+            settings: self.settings(),
+            cancel: CancelToken::default(),
+            background: true,
+        }));
+    }
+
+    fn transcribe_file(&mut self, path: std::path::PathBuf) {
+        let entry_id = store::new_id();
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+        let _ = self.history.send(HistoryCmd::Insert(Entry {
+            id: entry_id.clone(),
+            created_at: store::now_ms(),
+            duration_secs: 0.0,
+            text: String::new(),
+            status: Status::Pending,
+            progress: 0.0,
+            model: self.model_name.clone(),
+            source_name: name,
+            error: None,
+        }));
+        self.queue_background(entry_id, Audio::File(path), true);
+    }
+
+    fn retranscribe(&mut self, entry_id: String) {
+        let path = osw_core::paths::data_dir().join("recordings").join(format!("{entry_id}.wav"));
+        let _ = self.history.send(HistoryCmd::SetStatus {
+            id: entry_id.clone(),
+            status: Status::Pending,
+            progress: 0.0,
+        });
+        self.queue_background(entry_id, Audio::File(path), false);
+    }
+
+    fn background_done(&mut self, bg: Background, samples: Vec<f32>, result: Result<osw_core::Transcription, String>) {
+        if bg.store_audio && !samples.is_empty() {
+            let _ = self.history.send(HistoryCmd::SetDuration {
+                id: bg.entry_id.clone(),
+                secs: samples.len() as f32 / SAMPLE_RATE as f32,
+            });
+            let _ = self.history.send(HistoryCmd::SaveAudio { id: bg.entry_id.clone(), samples });
+        }
+        let result = result.map(|t| (t.text, self.model_name.clone()));
+        if let Err(e) = &result {
+            log::error!("background transcription failed: {e}");
+        }
+        let _ = self.history.send(HistoryCmd::SetResult { id: bg.entry_id, result });
     }
 
     fn cancel_all(&mut self) {
@@ -473,4 +625,14 @@ fn notify(message: &str) {
     let _ = std::process::Command::new("notify-send")
         .args(["--app-name=OpenSuperWhisper", "-i", "audio-input-microphone", "OpenSuperWhisper", message])
         .spawn();
+}
+
+/// Starts the history/settings window (a separate GTK process, so the
+/// daemon itself stays small and GTK-free).
+fn open_window() {
+    let sibling = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("osw-ui")));
+    let program = sibling.filter(|p| p.is_file()).unwrap_or_else(|| "osw-ui".into());
+    if let Err(e) = std::process::Command::new(&program).spawn() {
+        notify(&format!("Could not open the window ({}): {e}", program.display()));
+    }
 }

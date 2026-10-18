@@ -33,6 +33,7 @@ pub const CATALOG: &[CatalogModel] = &[
     ggml!("Turbo V3 large", "ggml-large-v3-turbo.bin", 1624, "High accuracy, best quality"),
     ggml!("Turbo V3 medium", "ggml-large-v3-turbo-q8_0.bin", 874, "Balanced speed and accuracy"),
     ggml!("Turbo V3 small", "ggml-large-v3-turbo-q5_0.bin", 574, "Fastest Turbo; recommended on GPU"),
+    ggml!("Medium", "ggml-medium-q5_0.bin", 539, "Multilingual, a little faster than Turbo on GPU"),
     ggml!("Small", "ggml-small-q8_0.bin", 264, "Multilingual, good for CPU-only machines"),
     ggml!("Base", "ggml-base-q8_0.bin", 82, "Multilingual, very fast on CPU, lower accuracy"),
     ggml!("Tiny (English)", "ggml-tiny.en.bin", 78, "English only, smallest and fastest"),

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds and installs osw + osw-daemon into ~/.local/bin and registers the
-# daemon to start with the desktop session.
+# Builds and installs osw, osw-daemon and osw-ui into ~/.local/bin, adds a
+# menu entry for the window and starts the daemon with the desktop session.
 #   scripts/install.sh          # Vulkan build
 #   scripts/install.sh --cuda   # CUDA build (needs nvidia-cuda-toolkit, gcc-12)
 set -euo pipefail
@@ -20,9 +20,13 @@ else
     cargo build --release -p osw-cli -p osw-daemon
 fi
 
+# The window does not use the inference engine, so one build fits all GPUs.
+cargo build --release -p osw-ui
+
 bin="$HOME/.local/bin"
 mkdir -p "$bin" "$HOME/.config/autostart" "$HOME/.local/share/applications"
 install -m 755 "$target/release/osw" "$target/release/osw-daemon" "$bin/"
+install -m 755 target/release/osw-ui "$bin/"
 install -m 644 packaging/opensuperwhisper.desktop "$HOME/.local/share/applications/"
-install -m 644 packaging/opensuperwhisper.desktop "$HOME/.config/autostart/"
-echo "Installed to $bin. Start now with: osw-daemon &"
+install -m 644 packaging/opensuperwhisper-autostart.desktop "$HOME/.config/autostart/opensuperwhisper.desktop"
+echo "Installed to $bin. Restart a running daemon with: osw quit; osw-daemon &"

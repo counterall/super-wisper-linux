@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/osw-core", "crates/osw-cli", "crates/osw-daemon"]
+members = ["crates/osw-core", "crates/osw-cli", "crates/osw-daemon", "crates/osw-ui"]
 
 [workspace.package]
 version = "0.1.0"

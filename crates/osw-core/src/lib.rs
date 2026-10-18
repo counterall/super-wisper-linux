@@ -3,13 +3,16 @@
 
 pub mod audio;
 pub mod config;
+#[cfg(feature = "engine")]
 pub mod engine;
+pub mod history;
 pub mod models;
 pub mod paths;
 pub mod settings;
 pub mod text;
 pub mod vad;
 
+#[cfg(feature = "engine")]
 pub use engine::{EngineOptions, Transcription, WhisperEngine};
 pub use settings::TranscribeSettings;
 
@@ -18,11 +21,13 @@ pub const SAMPLE_RATE: u32 = 16_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[cfg(feature = "engine")]
     #[error("failed to load model {path}: {source}")]
     ModelLoad {
         path: String,
         source: whisper_rs::WhisperError,
     },
+    #[cfg(feature = "engine")]
     #[error("whisper error: {0}")]
     Whisper(#[from] whisper_rs::WhisperError),
     #[error("audio error: {0}")]

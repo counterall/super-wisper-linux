@@ -21,8 +21,12 @@ pub fn config_dir() -> PathBuf {
     project_dirs().config_dir().to_path_buf()
 }
 
-/// Control socket of the running daemon.
+/// Control socket of the running daemon (`$OSW_SOCKET` overrides it, e.g.
+/// to run a second, isolated daemon for testing).
 pub fn socket_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("OSW_SOCKET") {
+        return path.into();
+    }
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);

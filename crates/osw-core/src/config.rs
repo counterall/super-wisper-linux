@@ -56,6 +56,10 @@ pub struct Config {
     /// Keep the microphone stream running between recordings so capture
     /// starts without device wake-up latency (the mic stays in use).
     pub keep_mic_warm: bool,
+    /// Keep dictations (text + audio) in the history.
+    pub save_history: bool,
+    /// Delete history entries older than this many days; `None` keeps all.
+    pub history_retention_days: Option<u32>,
 }
 
 impl Default for Config {
@@ -75,6 +79,8 @@ impl Default for Config {
             esc_cancel_without_confirmation: false,
             microphone: None,
             keep_mic_warm: false,
+            save_history: true,
+            history_retention_days: None,
         }
     }
 }

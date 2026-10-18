@@ -252,12 +252,16 @@ fn build_stream(
     let mut props = pw::properties::properties! {
         *pw::keys::MEDIA_TYPE => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Capture",
-        *pw::keys::MEDIA_ROLE => "Communication",
         *pw::keys::APP_NAME => "OpenSuperWhisper",
         *pw::keys::NODE_NAME => "opensuperwhisper",
     };
-    if let Some(target) = target {
-        props.insert(*pw::keys::TARGET_OBJECT, target);
+    match target {
+        Some(target) => props.insert(*pw::keys::TARGET_OBJECT, target),
+        // The Communication role makes WirePlumber switch Bluetooth headsets
+        // to their microphone (HFP) profile, but WirePlumber 0.4 then routes
+        // the stream to the headset even when another target is requested,
+        // so it is only set when following the default input.
+        None => props.insert(*pw::keys::MEDIA_ROLE, "Communication"),
     }
     let stream = pw::stream::StreamRc::new(core.clone(), "opensuperwhisper-capture", props)?;
 

@@ -3,8 +3,9 @@
 Linux port of [OpenSuperWhisper](https://github.com/Starmel/OpenSuperWhisper):
 local voice dictation with Whisper (whisper.cpp), built for low latency.
 
-Status: phase 1 — engine, CLI and desktop daemon (X11 hotkeys, PipeWire
-capture, auto-paste, tray, recording indicator). Settings/history UI is next.
+Status: engine, CLI, desktop daemon (X11 hotkeys, PipeWire capture,
+auto-paste, tray, recording indicator) and a GTK window with searchable
+history, settings and model downloads.
 
 ## Layout
 
@@ -14,11 +15,14 @@ capture, auto-paste, tray, recording indicator). Settings/history UI is next.
   `download`, and daemon control (`toggle`, `start`, `stop`, `cancel`,
   `reload`, `quit`).
 - `crates/osw-daemon` - background app: trigger → record → transcribe → paste.
+- `crates/osw-ui` - GTK4/libadwaita window: history (search, playback,
+  re-transcribe, drop audio files to transcribe) and settings.
 
 ## Build
 
 ```sh
-sudo apt install cmake clang libclang-dev libvulkan-dev glslc
+sudo apt install cmake clang libclang-dev libvulkan-dev glslc \
+  libpipewire-0.3-dev libgtk-4-dev libadwaita-1-dev
 cargo build --release            # Vulkan GPU backend (default)
 ```
 
@@ -49,8 +53,9 @@ osw download "Turbo V3 small"  # ggml-large-v3-turbo-q5_0.bin
 osw-daemon &                   # also starts automatically on next login
 ```
 
-Settings live in `~/.config/opensuperwhisper/config.toml` (created on first
-run; "Edit settings…" in the tray opens it, "Reload settings" applies it).
+Open the window from the tray ("Open OpenSuperWhisper…") or the
+applications menu. Settings are stored in
+`~/.config/opensuperwhisper/config.toml`; the window edits it for you.
 Default trigger: Right Ctrl pressed on its own — tap to start/stop, or hold
 to record until release (Right Ctrl + another key, e.g. Ctrl+C, is ignored).
 Other triggers:
