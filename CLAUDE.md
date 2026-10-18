@@ -73,8 +73,11 @@ Every engine/audio change should be checked with `osw bench`.
   process (`osw-ui`, app id `io.github.OpenSuperWhisper`), started from the
   tray or menu; starts the daemon if needed. History page (search, copy,
   `pw-play` playback, re-transcribe, delete, drag-and-drop/"+" file import)
-  and Settings page (model radio list + downloads with progress/cancel, all
-  config options; every change saves `config.toml` and sends `reload`).
+  and Settings page (model radio list + downloads with progress/cancel,
+  delete for every installed model except the one in use, "Models folder"
+  row; all config options; every change saves `config.toml` and sends
+  `reload`). Tray "Settings…" runs `osw-ui --settings`, which a running
+  instance handles (HANDLES_COMMAND_LINE).
 
 ## Build / test
 
@@ -91,7 +94,8 @@ entry runs `osw-ui`, autostart runs `osw-daemon`).
 
 UI layout check without a virtual X server: `OSW_UI_SCREENSHOT=out.png
 [OSW_UI_PAGE=settings] [OSW_UI_HEIGHT=1000] osw-ui` renders the window to a
-PNG after 1.5 s and quits (window flashes on screen). Use
+PNG after 1.5 s and quits (window flashes on screen; runs NON_UNIQUE so the
+user's open window is left alone). Use
 `XDG_DATA_HOME=<scratch>` with seeded rows for realistic content.
 
 End-to-end test without touching the user's keyboard/clipboard: run a second

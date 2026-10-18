@@ -81,6 +81,36 @@ pub fn installed() -> Vec<PathBuf> {
     models
 }
 
+/// The models directory with `~` for the home directory, for display.
+pub fn models_dir_display() -> String {
+    let dir = paths::models_dir();
+    match std::env::var_os("HOME").map(PathBuf::from) {
+        Some(home) if dir.starts_with(&home) => {
+            format!("~/{}", dir.strip_prefix(&home).unwrap().display())
+        }
+        _ => dir.display().to_string(),
+    }
+}
+
+/// Path of an installed model given its file name; `None` for names that
+/// would leave the models directory.
+fn installed_path(filename: &str) -> Option<PathBuf> {
+    let plain = !filename.is_empty() && !filename.contains('/') && filename != "." && filename != "..";
+    plain.then(|| paths::models_dir().join(filename))
+}
+
+/// Size on disk in bytes (following a symlink to its target).
+pub fn installed_size(filename: &str) -> Option<u64> {
+    std::fs::metadata(installed_path(filename)?).ok().map(|m| m.len())
+}
+
+/// Removes an installed model file (a symlink is removed, not its target).
+pub fn delete_installed(filename: &str) -> std::io::Result<()> {
+    let path = installed_path(filename)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid model name"))?;
+    std::fs::remove_file(path)
+}
+
 /// Downloads a catalog model into the models directory. `progress` gets
 /// (bytes so far, total if known). The file only appears under its final
 /// name once complete, so a cancelled or failed download leaves no model.
@@ -139,6 +169,14 @@ mod tests {
     use super::*;
 
     const HF: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
+
+    #[test]
+    fn delete_rejects_paths_outside_the_models_dir() {
+        for bad in ["", ".", "..", "../config.toml", "a/b.bin"] {
+            assert!(installed_path(bad).is_none(), "{bad:?}");
+        }
+        assert!(installed_path("ggml-base.bin").unwrap().ends_with("models/ggml-base.bin"));
+    }
 
     #[test]
     fn catalog_urls_point_at_their_files() {

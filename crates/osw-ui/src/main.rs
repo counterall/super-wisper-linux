@@ -17,10 +17,12 @@ fn main() -> glib::ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     // Command lines are handled by the first instance, so `osw-ui --settings`
     // from the tray switches an already open window to that page.
-    let app = adw::Application::builder()
-        .application_id(APP_ID)
-        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
-        .build();
+    let mut flags = gio::ApplicationFlags::HANDLES_COMMAND_LINE;
+    if std::env::var_os("OSW_UI_SCREENSHOT").is_some() {
+        // Never hand the command line to (and thereby disturb) an open window.
+        flags |= gio::ApplicationFlags::NON_UNIQUE;
+    }
+    let app = adw::Application::builder().application_id(APP_ID).flags(flags).build();
     app.connect_command_line(|app, cmdline| {
         let page = if cmdline.arguments().iter().any(|a| a == "--settings") { "settings" } else { "history" };
         show(app, page);

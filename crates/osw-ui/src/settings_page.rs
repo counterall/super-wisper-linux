@@ -43,7 +43,9 @@ pub fn build(window: &adw::ApplicationWindow, toasts: &adw::ToastOverlay) -> gtk
         Config::default()
     })));
     let page = adw::PreferencesPage::new();
-    page.add(&model_group(&config, toasts));
+    for group in model_groups(window, &config, toasts) {
+        page.add(&group);
+    }
     page.add(&recording_group(&config, toasts));
     page.add(&text_group(&config, toasts));
     page.add(&history_group(window, &config, toasts));
@@ -53,90 +55,233 @@ pub fn build(window: &adw::ApplicationWindow, toasts: &adw::ToastOverlay) -> gtk
 
 // --- model ------------------------------------------------------------------
 
-fn model_group(config: &Shared, toasts: &adw::ToastOverlay) -> adw::PreferencesGroup {
+/// The model list; rebuilt in place after downloads and deletions.
+#[derive(Clone)]
+struct ModelList {
+    list: gtk::ListBox,
+    config: Shared,
+    toasts: adw::ToastOverlay,
+    window: adw::ApplicationWindow,
+}
+
+fn model_groups(window: &adw::ApplicationWindow, config: &Shared, toasts: &adw::ToastOverlay) -> [adw::PreferencesGroup; 2] {
     let group = adw::PreferencesGroup::builder()
         .title("Whisper model")
         .description("Larger models are more accurate; Turbo V3 small is fast on a GPU.")
         .build();
-    let rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::default();
-    populate_models(&group, &rows, config, toasts);
+    let list = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .css_classes(["boxed-list"])
+        .build();
+    group.add(&list);
+    let models = ModelList { list, config: config.clone(), toasts: toasts.clone(), window: window.clone() };
+    models.populate();
 
+    let options = adw::PreferencesGroup::new();
     let gpu = adw::SwitchRow::builder()
         .title("GPU acceleration")
         .subtitle("Much faster; turn off if the GPU misbehaves")
         .active(config.borrow().use_gpu)
         .build();
     gpu.connect_active_notify(on_change(config, toasts, |c, w: &adw::SwitchRow| c.use_gpu = w.is_active()));
-    group.add(&gpu);
-    group
+    options.add(&gpu);
+
+    let folder = adw::ActionRow::builder()
+        .title("Models folder")
+        .subtitle(models::models_dir_display())
+        .activatable(true)
+        .build();
+    folder.add_suffix(&gtk::Image::from_icon_name("folder-open-symbolic"));
+    {
+        let window = window.clone();
+        folder.connect_activated(move |_| {
+            let dir = gtk::gio::File::for_path(osw_core::paths::models_dir());
+            gtk::FileLauncher::new(Some(&dir)).launch(Some(&window), None::<&gtk::gio::Cancellable>, |_| {});
+        });
+    }
+    options.add(&folder);
+    [group, options]
 }
 
-/// (Re)builds one row per catalog model plus any other installed model.
-fn populate_models(
-    group: &adw::PreferencesGroup,
-    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
-    config: &Shared,
-    toasts: &adw::ToastOverlay,
-) {
-    for row in rows.borrow_mut().drain(..) {
-        group.remove(&row);
-    }
-    let selected = config
-        .borrow()
-        .model_path()
-        .and_then(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()));
-    let installed: Vec<String> = models::installed()
-        .iter()
-        .filter_map(|p| Some(p.file_name()?.to_string_lossy().into_owned()))
-        .collect();
-
-    let mut entries: Vec<(String, String, Option<&'static CatalogModel>)> = models::CATALOG
-        .iter()
-        .map(|m| (m.filename.to_string(), m.name.to_string(), Some(m)))
-        .collect();
-    entries.extend(
-        installed
+impl ModelList {
+    /// One row per catalog model plus any other installed model.
+    fn populate(&self) {
+        self.list.remove_all();
+        let selected = self
+            .config
+            .borrow()
+            .model_path()
+            .and_then(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()));
+        let installed: Vec<String> = models::installed()
             .iter()
-            .filter(|f| models::find(f).is_none())
-            .map(|f| (f.clone(), f.clone(), None)),
-    );
+            .filter_map(|p| Some(p.file_name()?.to_string_lossy().into_owned()))
+            .collect();
 
-    let group_anchor = gtk::CheckButton::new(); // radio group leader, never shown
-    let mut new_rows = Vec::new();
-    for (filename, name, catalog) in entries {
-        let row = adw::ActionRow::builder().title(&name).build();
-        if let Some(m) = catalog {
-            row.set_subtitle(&format!("{} · {}", m.description, size_label(m.size_mb)));
+        let mut entries: Vec<(String, String, Option<&'static CatalogModel>)> = models::CATALOG
+            .iter()
+            .map(|m| (m.filename.to_string(), m.name.to_string(), Some(m)))
+            .collect();
+        entries.extend(
+            installed
+                .iter()
+                .filter(|f| models::find(f).is_none())
+                .map(|f| (f.clone(), f.clone(), None)),
+        );
+
+        let group_anchor = gtk::CheckButton::new(); // radio group leader, never shown
+        for (filename, name, catalog) in entries {
+            let row = adw::ActionRow::builder().title(&name).build();
+            if let Some(m) = catalog {
+                row.set_subtitle(&format!("{} · {}", m.description, size_label(m.size_mb)));
+            }
+            if installed.contains(&filename) {
+                let radio = gtk::CheckButton::builder().valign(gtk::Align::Center).build();
+                radio.set_group(Some(&group_anchor));
+                let in_use = selected.as_deref() == Some(filename.as_str());
+                radio.set_active(in_use);
+                let delete = self.delete_button(&filename, &name, in_use);
+                {
+                    let this = self.clone();
+                    let filename = filename.clone();
+                    let delete = delete.clone();
+                    radio.connect_toggled(move |r| {
+                        // Only the model in use cannot be deleted.
+                        delete.set_sensitive(!r.is_active());
+                        if r.is_active() {
+                            this.config.borrow_mut().model = Some(filename.clone());
+                            save(&this.config, &this.toasts);
+                            this.toasts.add_toast(adw::Toast::new("Loading model…"));
+                        }
+                    });
+                }
+                row.add_prefix(&radio);
+                row.add_suffix(&delete);
+                row.set_activatable_widget(Some(&radio));
+            } else if let Some(m) = catalog {
+                // Same indent as the radio buttons of installed models.
+                let icon = gtk::Image::builder()
+                    .icon_name("folder-download-symbolic")
+                    .width_request(30)
+                    .css_classes(["dim-label"])
+                    .build();
+                row.add_prefix(&icon);
+                row.add_suffix(&self.download_widget(m));
+            }
+            self.list.append(&row);
         }
-        if installed.contains(&filename) {
-            let radio = gtk::CheckButton::builder().valign(gtk::Align::Center).build();
-            radio.set_group(Some(&group_anchor));
-            radio.set_active(selected.as_deref() == Some(filename.as_str()));
-            let config2 = config.clone();
-            let toasts2 = toasts.clone();
-            radio.connect_toggled(move |r| {
-                if r.is_active() {
-                    config2.borrow_mut().model = Some(filename.clone());
-                    save(&config2, &toasts2);
-                    toasts2.add_toast(adw::Toast::new("Loading model…"));
+    }
+
+    fn delete_button(&self, filename: &str, name: &str, in_use: bool) -> gtk::Button {
+        let button = gtk::Button::builder()
+            .icon_name("user-trash-symbolic")
+            .valign(gtk::Align::Center)
+            .css_classes(["flat", "circular"])
+            .sensitive(!in_use)
+            .build();
+        button.set_tooltip_text(Some(if in_use {
+            "In use: choose another model before deleting this one"
+        } else {
+            "Delete this model"
+        }));
+        let this = self.clone();
+        let (filename, name) = (filename.to_string(), name.to_string());
+        button.connect_clicked(move |_| {
+            let size = models::installed_size(&filename).map(|b| size_label((b / 1_000_000) as u32));
+            let body = match size {
+                Some(size) => format!("This frees {size}. You can download it again later."),
+                None => "You can download it again later.".to_string(),
+            };
+            let dialog = adw::AlertDialog::new(Some(&format!("Delete {name}?")), Some(&body));
+            dialog.add_response("cancel", "Cancel");
+            dialog.add_response("delete", "Delete");
+            dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+            dialog.set_default_response(Some("cancel"));
+            let window = this.window.clone();
+            let this = this.clone();
+            let filename = filename.clone();
+            dialog.connect_response(None, move |_, response| {
+                if response != "delete" {
+                    return;
+                }
+                match models::delete_installed(&filename) {
+                    Ok(()) => this.toasts.add_toast(adw::Toast::new("Model deleted")),
+                    Err(e) => this.toasts.add_toast(adw::Toast::new(&format!("Delete failed: {e}"))),
+                }
+                this.populate();
+            });
+            dialog.present(Some(&window));
+        });
+        button
+    }
+
+    /// "Download" button that turns into a progress bar with a cancel button.
+    fn download_widget(&self, model: &'static CatalogModel) -> gtk::Widget {
+        let stack = gtk::Stack::builder().valign(gtk::Align::Center).build();
+        let button = gtk::Button::builder().label("Download").css_classes(["flat"]).build();
+        let progress = gtk::ProgressBar::builder().width_request(120).valign(gtk::Align::Center).build();
+        let cancel = gtk::Button::builder()
+            .icon_name("process-stop-symbolic")
+            .tooltip_text("Cancel download")
+            .css_classes(["flat", "circular"])
+            .build();
+        let busy = gtk::Box::builder().spacing(6).build();
+        busy.append(&progress);
+        busy.append(&cancel);
+        stack.add_named(&button, Some("idle"));
+        stack.add_named(&busy, Some("busy"));
+
+        let flag = Arc::new(AtomicBool::new(false));
+        {
+            let flag = flag.clone();
+            cancel.connect_clicked(move |_| flag.store(true, Ordering::Relaxed));
+        }
+        let this = self.clone();
+        let widget = stack.clone();
+        button.connect_clicked(move |_| {
+            stack.set_visible_child_name("busy");
+            flag.store(false, Ordering::Relaxed);
+            let (tx, rx) = async_channel::unbounded::<Result<f64, Option<String>>>();
+            let flag = flag.clone();
+            std::thread::spawn(move || {
+                let mut last = 0.0;
+                let result = models::download(model, &flag, |done, total| {
+                    if let Some(t) = total {
+                        let f = done as f64 / t as f64;
+                        if f - last >= 0.005 {
+                            last = f;
+                            let _ = tx.send_blocking(Ok(f));
+                        }
+                    }
+                });
+                let _ = tx.send_blocking(match result {
+                    Ok(_) => Err(None),
+                    Err(osw_core::Error::Cancelled) => Err(Some(String::new())),
+                    Err(e) => Err(Some(e.to_string())),
+                });
+            });
+            let (stack, progress, this) = (stack.clone(), progress.clone(), this.clone());
+            glib::spawn_future_local(async move {
+                while let Ok(msg) = rx.recv().await {
+                    match msg {
+                        Ok(fraction) => progress.set_fraction(fraction),
+                        Err(None) => {
+                            this.toasts.add_toast(adw::Toast::new(&format!("{} downloaded", model.name)));
+                            this.populate();
+                            return;
+                        }
+                        Err(Some(e)) => {
+                            if !e.is_empty() {
+                                this.toasts.add_toast(adw::Toast::new(&format!("Download failed: {e}")));
+                            }
+                            stack.set_visible_child_name("idle");
+                            return;
+                        }
+                    }
                 }
             });
-            row.add_prefix(&radio);
-            row.set_activatable_widget(Some(&radio));
-        } else if let Some(m) = catalog {
-            // Same indent as the radio buttons of installed models.
-            let icon = gtk::Image::builder()
-                .icon_name("folder-download-symbolic")
-                .width_request(30)
-                .css_classes(["dim-label"])
-                .build();
-            row.add_prefix(&icon);
-            row.add_suffix(&download_widget(m, group, rows, config, toasts));
-        }
-        group.add(&row);
-        new_rows.push(row);
+        });
+        widget.upcast()
     }
-    *rows.borrow_mut() = new_rows;
 }
 
 fn size_label(mb: u32) -> String {
@@ -145,82 +290,6 @@ fn size_label(mb: u32) -> String {
     } else {
         format!("{mb} MB")
     }
-}
-
-/// "Download" button that turns into a progress bar with a cancel button.
-fn download_widget(
-    model: &'static CatalogModel,
-    group: &adw::PreferencesGroup,
-    rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
-    config: &Shared,
-    toasts: &adw::ToastOverlay,
-) -> gtk::Widget {
-    let stack = gtk::Stack::builder().valign(gtk::Align::Center).build();
-    let button = gtk::Button::builder().label("Download").css_classes(["flat"]).build();
-    let progress = gtk::ProgressBar::builder().width_request(120).valign(gtk::Align::Center).build();
-    let cancel = gtk::Button::builder()
-        .icon_name("process-stop-symbolic")
-        .tooltip_text("Cancel download")
-        .css_classes(["flat", "circular"])
-        .build();
-    let busy = gtk::Box::builder().spacing(6).build();
-    busy.append(&progress);
-    busy.append(&cancel);
-    stack.add_named(&button, Some("idle"));
-    stack.add_named(&busy, Some("busy"));
-
-    let flag = Arc::new(AtomicBool::new(false));
-    {
-        let flag = flag.clone();
-        cancel.connect_clicked(move |_| flag.store(true, Ordering::Relaxed));
-    }
-    let (group, rows, config, toasts) = (group.clone(), rows.clone(), config.clone(), toasts.clone());
-    let widget = stack.clone();
-    button.connect_clicked(move |_| {
-        stack.set_visible_child_name("busy");
-        flag.store(false, Ordering::Relaxed);
-        let (tx, rx) = async_channel::unbounded::<Result<f64, Option<String>>>();
-        let flag = flag.clone();
-        std::thread::spawn(move || {
-            let mut last = 0.0;
-            let result = models::download(model, &flag, |done, total| {
-                if let Some(t) = total {
-                    let f = done as f64 / t as f64;
-                    if f - last >= 0.005 {
-                        last = f;
-                        let _ = tx.send_blocking(Ok(f));
-                    }
-                }
-            });
-            let _ = tx.send_blocking(match result {
-                Ok(_) => Err(None),
-                Err(osw_core::Error::Cancelled) => Err(Some(String::new())),
-                Err(e) => Err(Some(e.to_string())),
-            });
-        });
-        let (stack, progress) = (stack.clone(), progress.clone());
-        let (group, rows, config, toasts) = (group.clone(), rows.clone(), config.clone(), toasts.clone());
-        glib::spawn_future_local(async move {
-            while let Ok(msg) = rx.recv().await {
-                match msg {
-                    Ok(fraction) => progress.set_fraction(fraction),
-                    Err(None) => {
-                        toasts.add_toast(adw::Toast::new(&format!("{} downloaded", model.name)));
-                        populate_models(&group, &rows, &config, &toasts);
-                        return;
-                    }
-                    Err(Some(e)) => {
-                        if !e.is_empty() {
-                            toasts.add_toast(adw::Toast::new(&format!("Download failed: {e}")));
-                        }
-                        stack.set_visible_child_name("idle");
-                        return;
-                    }
-                }
-            }
-        });
-    });
-    widget.upcast()
 }
 
 // --- recording ----------------------------------------------------------------
