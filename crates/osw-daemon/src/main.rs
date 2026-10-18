@@ -69,6 +69,7 @@ struct App {
     confirm_cancel_until: Option<Instant>,
     next_id: u64,
     model_name: String,
+    silence_warned_at: Option<Instant>,
 }
 
 fn main() -> Result<()> {
@@ -122,6 +123,7 @@ fn main() -> Result<()> {
         confirm_cancel_until: None,
         next_id: 0,
         model_name: String::new(),
+        silence_warned_at: None,
     };
     app.load_model();
     let result = app.run(&rx);
@@ -274,6 +276,21 @@ impl App {
             recorded.start_latency
         );
         if duration < MIN_RECORDING || recorded.samples.is_empty() {
+            self.refresh_indicators();
+            return;
+        }
+        // Digital silence means no microphone signal at all (unplugged mic,
+        // default input pointing at a speaker monitor), not a quiet room.
+        let peak = recorded.samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        if peak < 1e-4 {
+            log::warn!("recording is silent (peak {peak:e})");
+            if self.silence_warned_at.is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
+                self.silence_warned_at = Some(Instant::now());
+                notify(
+                    "The microphone delivered no sound. Is a microphone connected? \
+                     Choose one in the tray menu under Microphone.",
+                );
+            }
             self.refresh_indicators();
             return;
         }
