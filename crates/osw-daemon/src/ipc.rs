@@ -34,7 +34,7 @@ impl IpcCmd {
 pub fn listen(on_cmd: impl Fn(IpcCmd) + Send + 'static) -> Result<()> {
     let path = osw_core::paths::socket_path();
     if UnixStream::connect(&path).is_ok() {
-        bail!("OpenSuperWhisper is already running ({})", path.display());
+        bail!("OpenSuperWhisper is already running. Use `osw toggle` to record, `osw quit` to stop it.");
     }
     let _ = std::fs::remove_file(&path); // stale socket from a crash
     let listener = UnixListener::bind(&path)?;
