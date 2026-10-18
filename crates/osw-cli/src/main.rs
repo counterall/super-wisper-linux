@@ -32,9 +32,27 @@ enum Command {
         /// Timed runs per model (after warm-up).
         #[arg(long, default_value_t = 5)]
         runs: usize,
+        /// Idle pause before each run, to include GPU/CPU clock ramp-up like
+        /// real dictation does.
+        #[arg(long, default_value_t = 0)]
+        gap_ms: u64,
     },
     /// List the model catalog and installed models.
     Models,
+    /// Download a catalog model (by filename or name, e.g. "Turbo V3 small").
+    Download { model: String },
+    /// Start or stop recording in the running daemon.
+    Toggle,
+    /// Start recording in the running daemon.
+    Start,
+    /// Stop recording and transcribe.
+    Stop,
+    /// Cancel the current recording/transcription.
+    Cancel,
+    /// Make the daemon re-read its config file.
+    Reload,
+    /// Stop the daemon.
+    Quit,
 }
 
 #[derive(Args)]
@@ -98,9 +116,55 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     match Cli::parse().command {
         Command::Transcribe { file, engine, timestamps } => transcribe(&file, &engine, timestamps),
-        Command::Bench { file, engine, runs } => bench(&file, &engine, runs),
+        Command::Bench { file, engine, runs, gap_ms } => bench(&file, &engine, runs, gap_ms),
         Command::Models => list_models(),
+        Command::Download { model } => download(&model),
+        Command::Toggle => send("toggle"),
+        Command::Start => send("start"),
+        Command::Stop => send("stop"),
+        Command::Cancel => send("cancel"),
+        Command::Reload => send("reload"),
+        Command::Quit => send("quit"),
     }
+}
+
+fn send(cmd: &str) -> Result<()> {
+    use std::io::{Read, Write};
+    let path = paths::socket_path();
+    let mut stream = std::os::unix::net::UnixStream::connect(&path)
+        .with_context(|| format!("the daemon is not running ({})", path.display()))?;
+    stream.write_all(format!("{cmd}\n").as_bytes())?;
+    let mut reply = String::new();
+    stream.read_to_string(&mut reply)?;
+    if reply.trim() != "ok" {
+        bail!("{}", reply.trim());
+    }
+    Ok(())
+}
+
+fn download(name: &str) -> Result<()> {
+    use std::io::Write;
+    let wanted = name.to_ascii_lowercase();
+    let Some(model) = models::CATALOG
+        .iter()
+        .find(|m| m.filename == name || m.name.to_ascii_lowercase() == wanted)
+    else {
+        bail!("unknown model {name:?}; see `osw models`");
+    };
+    let mut last = Instant::now();
+    let path = models::download(model, &std::sync::atomic::AtomicBool::new(false), |done, total| {
+        if last.elapsed() >= Duration::from_millis(250) {
+            last = Instant::now();
+            match total {
+                Some(t) => eprint!("\r{}: {:.0}% of {} MB   ", model.name, done as f64 * 100.0 / t as f64, t / 1_000_000),
+                None => eprint!("\r{}: {} MB   ", model.name, done / 1_000_000),
+            }
+            let _ = std::io::stderr().flush();
+        }
+    })?;
+    eprintln!();
+    println!("{}", path.display());
+    Ok(())
 }
 
 fn load_audio(file: &Path) -> Result<(Vec<f32>, Duration)> {
@@ -129,7 +193,7 @@ fn median(values: &mut [f64]) -> f64 {
     values[values.len() / 2]
 }
 
-fn bench(file: &Path, args: &EngineArgs, runs: usize) -> Result<()> {
+fn bench(file: &Path, args: &EngineArgs, runs: usize, gap_ms: u64) -> Result<()> {
     let runs = runs.max(1);
     let opts = args.options();
     let (samples, decode_time) = load_audio(file)?;
@@ -163,6 +227,7 @@ fn bench(file: &Path, args: &EngineArgs, runs: usize) -> Result<()> {
         for _ in 0..runs {
             // A real dictation prepares the state when recording starts.
             engine.prepare()?;
+            std::thread::sleep(Duration::from_millis(gap_ms));
             let t = Instant::now();
             let r = engine.transcribe(&samples, &settings, &CancelToken::default(), None)?;
             totals.push(ms(t.elapsed()));

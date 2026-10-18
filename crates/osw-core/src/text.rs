@@ -45,6 +45,20 @@ pub fn assemble(segments: &[Segment], settings: &TranscribeSettings) -> String {
     }
 }
 
+/// Text as it is inserted into the focused app: with the "add space after
+/// sentence" option, a trailing punctuation mark gets a space so the next
+/// dictation does not run into it.
+pub fn finalize_for_insert(text: &str, add_space_after_sentence: bool) -> String {
+    let ends_with_punct = text.chars().last().is_some_and(|c| {
+        c.is_ascii_punctuation() || "。！？，；：…、」』）".contains(c)
+    });
+    if add_space_after_sentence && ends_with_punct {
+        format!("{text} ")
+    } else {
+        text.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,6 +85,14 @@ mod tests {
     fn timestamps_are_line_oriented() {
         let s = TranscribeSettings { show_timestamps: true, ..Default::default() };
         assert_eq!(assemble(&[seg("a"), seg("b")], &s), "[0.0->1.5] a\n[0.0->1.5] b");
+    }
+
+    #[test]
+    fn space_after_sentence() {
+        assert_eq!(finalize_for_insert("Hello.", true), "Hello. ");
+        assert_eq!(finalize_for_insert("你好。", true), "你好。 ");
+        assert_eq!(finalize_for_insert("Hello", true), "Hello");
+        assert_eq!(finalize_for_insert("Hello.", false), "Hello.");
     }
 
     #[test]

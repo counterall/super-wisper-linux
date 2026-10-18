@@ -17,6 +17,8 @@ autocorrect = "2.14"
 serde = { version = "1", features = ["derive"] }
 directories = "6"
 thiserror = "2"
+toml = "1"
+ureq = "3"
 log.workspace = true
 
 [dev-dependencies]

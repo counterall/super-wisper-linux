@@ -3,14 +3,17 @@
 Linux port of [OpenSuperWhisper](https://github.com/Starmel/OpenSuperWhisper):
 local voice dictation with Whisper (whisper.cpp), built for low latency.
 
-Status: core engine + benchmark CLI. Desktop daemon (hotkeys, paste, tray,
-overlay) and GTK UI are next.
+Status: phase 1 — engine, CLI and desktop daemon (X11 hotkeys, PipeWire
+capture, auto-paste, tray, recording indicator). Settings/history UI is next.
 
 ## Layout
 
 - `crates/osw-core` - audio decoding/resampling, Silero VAD gate, whisper.cpp
   engine, model catalog, paths. No UI code.
-- `crates/osw-cli` - `osw` binary: `transcribe`, `bench`, `models`.
+- `crates/osw-cli` - `osw` binary: `transcribe`, `bench`, `models`,
+  `download`, and daemon control (`toggle`, `start`, `stop`, `cancel`,
+  `reload`, `quit`).
+- `crates/osw-daemon` - background app: trigger → record → transcribe → paste.
 
 ## Build
 
@@ -37,6 +40,34 @@ Measured on a GTX 1070, 5 s dictation, stop-to-text:
 | Medium q5_0 | 1203 ms | 437 ms |
 | Small q8_0 | 412 ms | 198 ms |
 | Base q8_0 | 157 ms | - |
+
+## Install
+
+```sh
+scripts/install.sh --cuda      # or without --cuda for the Vulkan build
+osw download "Turbo V3 small"  # ggml-large-v3-turbo-q5_0.bin
+osw-daemon &                   # also starts automatically on next login
+```
+
+Settings live in `~/.config/opensuperwhisper/config.toml` (created on first
+run; "Edit settings…" in the tray opens it, "Reload settings" applies it).
+Default trigger: `Alt+grave` — tap to start/stop, or hold to record until
+release. Other triggers:
+
+```toml
+[trigger]
+type = "modifier_key"   # a single modifier pressed alone
+key = "right_ctrl"      # left/right_ctrl, _alt, _shift, _super
+
+[trigger]
+type = "mouse_button"
+button = 9              # 8/9 = thumb buttons, 2 = middle
+
+[trigger]
+type = "none"           # bind `osw toggle` in the desktop's keyboard settings
+```
+
+Esc twice cancels (once with `esc_cancel_without_confirmation = true`).
 
 ## Usage
 

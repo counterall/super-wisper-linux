@@ -1,0 +1,22 @@
+[package]
+name = "osw-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["vulkan"]
+vulkan = ["osw-core/vulkan"]
+cuda = ["osw-core/cuda"]
+
+[dependencies]
+osw-core.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger = "0.11"
+crossbeam-channel = "0.5"
+pipewire = { version = "0.10", features = ["v1_0_0"] }
+x11rb = { version = "0.14", features = ["xinput", "xtest", "xkb", "randr", "shape"] }
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
+arboard = { version = "3.7", default-features = false }
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }

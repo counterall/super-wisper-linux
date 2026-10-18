@@ -21,6 +21,14 @@ pub fn config_dir() -> PathBuf {
     project_dirs().config_dir().to_path_buf()
 }
 
+/// Control socket of the running daemon.
+pub fn socket_path() -> PathBuf {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    dir.join("opensuperwhisper.sock")
+}
+
 pub fn models_dir() -> PathBuf {
     data_dir().join("models")
 }

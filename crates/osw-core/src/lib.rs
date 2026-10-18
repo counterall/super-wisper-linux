@@ -2,6 +2,7 @@
 //! whisper.cpp transcription. No UI or desktop integration lives here.
 
 pub mod audio;
+pub mod config;
 pub mod engine;
 pub mod models;
 pub mod paths;
@@ -26,7 +27,9 @@ pub enum Error {
     Whisper(#[from] whisper_rs::WhisperError),
     #[error("audio error: {0}")]
     Audio(String),
-    #[error("transcription cancelled")]
+    #[error("download failed: {0}")]
+    Download(String),
+    #[error("cancelled")]
     Cancelled,
     #[error(transparent)]
     Io(#[from] std::io::Error),

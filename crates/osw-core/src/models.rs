@@ -1,6 +1,8 @@
+use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::paths;
+use crate::{paths, Error, Result};
 
 /// A downloadable ggml Whisper model.
 #[derive(Clone, Debug)]
@@ -76,6 +78,59 @@ pub fn installed() -> Vec<PathBuf> {
         .collect();
     models.sort();
     models
+}
+
+/// Downloads a catalog model into the models directory. `progress` gets
+/// (bytes so far, total if known). The file only appears under its final
+/// name once complete, so a cancelled or failed download leaves no model.
+pub fn download(
+    model: &CatalogModel,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(u64, Option<u64>),
+) -> Result<PathBuf> {
+    let dir = paths::models_dir();
+    std::fs::create_dir_all(&dir)?;
+    let dest = dir.join(model.filename);
+    if dest.is_file() {
+        return Ok(dest);
+    }
+    let part = dir.join(format!("{}.part", model.filename));
+
+    let response = ureq::get(model.url)
+        .call()
+        .map_err(|e| Error::Download(e.to_string()))?;
+    let total = response.body().content_length();
+    let mut reader = response.into_body().into_reader();
+    let mut file = std::io::BufWriter::new(std::fs::File::create(&part)?);
+    let mut buf = vec![0u8; 1 << 16];
+    let mut done = 0u64;
+    let result = loop {
+        if cancel.load(Ordering::Relaxed) {
+            break Err(Error::Cancelled);
+        }
+        match reader.read(&mut buf) {
+            Ok(0) => break Ok(()),
+            Ok(n) => {
+                file.write_all(&buf[..n])?;
+                done += n as u64;
+                progress(done, total);
+            }
+            Err(e) => break Err(Error::Download(e.to_string())),
+        }
+    };
+    let result = result.and_then(|_| match total {
+        Some(t) if t != done => Err(Error::Download(format!("incomplete: {done} of {t} bytes"))),
+        _ => Ok(()),
+    });
+    if let Err(e) = result {
+        drop(file);
+        let _ = std::fs::remove_file(&part);
+        return Err(e);
+    }
+    file.flush()?;
+    drop(file);
+    std::fs::rename(&part, &dest)?;
+    Ok(dest)
 }
 
 #[cfg(test)]

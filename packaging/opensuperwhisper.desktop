@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=OpenSuperWhisper
+Comment=Local voice dictation with Whisper
+Exec=osw-daemon
+Icon=audio-input-microphone
+Terminal=false
+Categories=Utility;Accessibility;
+X-GNOME-Autostart-enabled=true
