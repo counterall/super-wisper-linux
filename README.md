@@ -51,13 +51,14 @@ osw-daemon &                   # also starts automatically on next login
 
 Settings live in `~/.config/opensuperwhisper/config.toml` (created on first
 run; "Edit settings…" in the tray opens it, "Reload settings" applies it).
-Default trigger: `Alt+grave` — tap to start/stop, or hold to record until
-release. Other triggers:
+Default trigger: Right Ctrl pressed on its own — tap to start/stop, or hold
+to record until release (Right Ctrl + another key, e.g. Ctrl+C, is ignored).
+Other triggers:
 
 ```toml
 [trigger]
-type = "modifier_key"   # a single modifier pressed alone
-key = "right_ctrl"      # left/right_ctrl, _alt, _shift, _super
+type = "shortcut"       # a key combination; must not be a desktop shortcut
+keys = "Ctrl+Alt+d"
 
 [trigger]
 type = "mouse_button"

@@ -105,6 +105,12 @@ impl Input {
             Trigger::None => Active::None,
             Trigger::Shortcut { keys } => {
                 let sc = keys::parse_shortcut(keys)?;
+                let taken = crate::conflicts::find(&sc);
+                anyhow::ensure!(
+                    taken.is_empty(),
+                    "{keys:?} is already a desktop shortcut ({}); pick another trigger",
+                    taken.join(", ")
+                );
                 let keycodes = keymap.keycodes(sc.keysym);
                 anyhow::ensure!(!keycodes.is_empty(), "no key on this keyboard produces {keys:?}");
                 for &kc in &keycodes {

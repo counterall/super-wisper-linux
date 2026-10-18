@@ -20,6 +20,10 @@ Every engine/audio change should be checked with `osw bench`.
 - GPU: Vulkan is the default cargo feature (portable); **CUDA is ~3x faster on
   the dev GPU** and is what we use for perf work.
 - Flash attention on only with GPU (it is ~30% slower on CPU).
+- Default trigger: **Right Ctrl alone** (`modifier_key`). Alt+grave (the Mac
+  default) is Cinnamon/GNOME `switch-group`; WMs grab via XInput2, which
+  beats our core grab with no error, so combos are checked against desktop
+  gsettings (`conflicts.rs`) and refused if taken.
 
 ## Layout
 

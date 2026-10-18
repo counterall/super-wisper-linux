@@ -3,6 +3,7 @@
 //! controller loop below through one channel.
 
 mod capture;
+mod conflicts;
 mod input;
 mod ipc;
 mod keys;

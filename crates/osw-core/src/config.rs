@@ -64,7 +64,10 @@ impl Default for Config {
             model: None,
             use_gpu: true,
             transcription: TranscribeSettings::default(),
-            trigger: Trigger::Shortcut { keys: "Alt+grave".into() },
+            // A lone modifier is watched passively, so it cannot collide with
+            // desktop shortcuts (Alt+grave, the macOS default, is Cinnamon's
+            // and GNOME's "switch windows of an app").
+            trigger: Trigger::ModifierKey { key: ModifierKey::RightCtrl },
             hold_to_record: true,
             auto_paste: true,
             keep_in_clipboard: false,
