@@ -6,6 +6,8 @@ mod daemon;
 mod history_page;
 mod settings_page;
 
+use std::cell::RefCell;
+
 use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 
@@ -13,16 +15,39 @@ const APP_ID: &str = "io.github.OpenSuperWhisper";
 
 fn main() -> glib::ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    let app = adw::Application::builder().application_id(APP_ID).build();
-    app.connect_activate(build_window);
+    // Command lines are handled by the first instance, so `osw-ui --settings`
+    // from the tray switches an already open window to that page.
+    let app = adw::Application::builder()
+        .application_id(APP_ID)
+        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
+        .build();
+    app.connect_command_line(|app, cmdline| {
+        let page = if cmdline.arguments().iter().any(|a| a == "--settings") { "settings" } else { "history" };
+        show(app, page);
+        glib::ExitCode::SUCCESS
+    });
     app.run()
 }
 
-fn build_window(app: &adw::Application) {
+thread_local! {
+    static STACK: RefCell<Option<adw::ViewStack>> = const { RefCell::new(None) };
+}
+
+fn show(app: &adw::Application, page: &str) {
+    if app.active_window().is_none() {
+        build_window(app);
+    }
+    STACK.with_borrow(|stack| {
+        if let Some(stack) = stack {
+            stack.set_visible_child_name(page);
+        }
+    });
     if let Some(window) = app.active_window() {
         window.present();
-        return;
     }
+}
+
+fn build_window(app: &adw::Application) {
     if !daemon::is_running() {
         if let Err(e) = daemon::start() {
             log::error!("could not start osw-daemon: {e}");
@@ -38,6 +63,7 @@ fn build_window(app: &adw::Application) {
         .build();
 
     let stack = adw::ViewStack::new();
+    STACK.set(Some(stack.clone()));
     let history = history_page::build(&window, &toasts);
     stack.add_titled_with_icon(&history, Some("history"), "History", "document-open-recent-symbolic");
     let settings = settings_page::build(&window, &toasts);

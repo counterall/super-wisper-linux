@@ -200,11 +200,8 @@ impl App {
                         self.capture.set_target(name);
                         self.save_config();
                     }
-                    TrayCmd::OpenConfig => {
-                        let _ = std::process::Command::new("xdg-open").arg(Config::path()).spawn();
-                    }
-                    TrayCmd::Reload => self.reload(),
-                    TrayCmd::OpenWindow => open_window(),
+                    TrayCmd::OpenWindow => open_window(&[]),
+                    TrayCmd::OpenSettings => open_window(&["--settings"]),
                     TrayCmd::Quit => return Ok(()),
                 },
                 Event::Worker(WorkerEvent::Loaded(result)) => match result {
@@ -629,10 +626,10 @@ fn notify(message: &str) {
 
 /// Starts the history/settings window (a separate GTK process, so the
 /// daemon itself stays small and GTK-free).
-fn open_window() {
+fn open_window(args: &[&str]) {
     let sibling = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("osw-ui")));
     let program = sibling.filter(|p| p.is_file()).unwrap_or_else(|| "osw-ui".into());
-    if let Err(e) = std::process::Command::new(&program).spawn() {
+    if let Err(e) = std::process::Command::new(&program).args(args).spawn() {
         notify(&format!("Could not open the window ({}): {e}", program.display()));
     }
 }

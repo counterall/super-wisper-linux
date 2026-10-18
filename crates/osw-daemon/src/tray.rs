@@ -20,8 +20,7 @@ pub enum TrayCmd {
     Toggle,
     SelectMicrophone(Option<String>),
     OpenWindow,
-    OpenConfig,
-    Reload,
+    OpenSettings,
     Quit,
 }
 
@@ -139,16 +138,9 @@ impl ksni::Tray for Tray {
             }
             .into(),
             StandardItem {
-                label: "Edit settings…".into(),
+                label: "Settings…".into(),
                 icon_name: "preferences-system".into(),
-                activate: Box::new(|t: &mut Self| (t.on_cmd)(TrayCmd::OpenConfig)),
-                ..Default::default()
-            }
-            .into(),
-            StandardItem {
-                label: "Reload settings".into(),
-                icon_name: "view-refresh".into(),
-                activate: Box::new(|t: &mut Self| (t.on_cmd)(TrayCmd::Reload)),
+                activate: Box::new(|t: &mut Self| (t.on_cmd)(TrayCmd::OpenSettings)),
                 ..Default::default()
             }
             .into(),
