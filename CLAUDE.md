@@ -120,6 +120,7 @@ apt (needs gcc-12 host compiler).
 | Model | Vulkan | CUDA |
 |---|---|---|
 | Turbo V3 q5_0 | 1757 ms | 541 ms |
+| Turbo V3 (f16, "large") | — | 767 ms |
 | Medium q5_0 | 1203 ms | 437 ms |
 | Small q8_0 | 412 ms | 198 ms |
 
