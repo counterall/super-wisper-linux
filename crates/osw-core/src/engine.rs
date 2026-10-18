@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
-    WhisperVadContext, WhisperVadContextParams, WhisperVadParams,
+    WhisperVadContext, WhisperVadContextParams,
 };
 
 use crate::settings::TranscribeSettings;
@@ -66,6 +66,28 @@ pub struct Transcription {
     pub stats: Stats,
 }
 
+/// Silero VAD (CPU, single thread).
+pub struct Vad(Mutex<WhisperVadContext>);
+
+impl Vad {
+    pub fn load() -> Result<Self> {
+        let path = paths::vad_model_path()?;
+        let mut params = WhisperVadContextParams::default();
+        params.set_n_threads(1);
+        params.set_use_gpu(false);
+        let ctx = WhisperVadContext::new(&path.to_string_lossy(), params)
+            .map_err(|source| Error::ModelLoad { path: path.display().to_string(), source })?;
+        Ok(Self(Mutex::new(ctx)))
+    }
+
+    /// Speech probability per [`vad::WINDOW`] samples (last window zero-padded).
+    pub fn probs(&self, samples: &[f32]) -> Result<Vec<f32>> {
+        let mut ctx = self.0.lock().unwrap();
+        ctx.detect_speech(samples)?;
+        Ok(ctx.probabilities().to_vec())
+    }
+}
+
 /// A loaded Whisper model plus the Silero VAD gate in front of it.
 ///
 /// The model weights are shared; every transcription runs on its own fresh
@@ -73,7 +95,7 @@ pub struct Transcription {
 /// recordings and a hallucination on silence cannot poison the next one.
 pub struct WhisperEngine {
     ctx: WhisperContext,
-    vad: Mutex<WhisperVadContext>,
+    vad: Vad,
     /// State created ahead of time (see [`Self::prepare`]) so its GPU buffer
     /// allocation is off the stop-to-text critical path.
     prepared: Mutex<Option<WhisperState>>,
@@ -94,17 +116,9 @@ impl WhisperEngine {
             Error::ModelLoad { path: model_path.display().to_string(), source }
         })?;
 
-        let vad_path = paths::vad_model_path()?;
-        let mut vparams = WhisperVadContextParams::default();
-        vparams.set_n_threads(1);
-        vparams.set_use_gpu(false);
-        let vad = WhisperVadContext::new(&vad_path.to_string_lossy(), vparams).map_err(
-            |source| Error::ModelLoad { path: vad_path.display().to_string(), source },
-        )?;
-
         Ok(Self {
             ctx,
-            vad: Mutex::new(vad),
+            vad: Vad::load()?,
             prepared: Mutex::new(None),
             model_path: model_path.to_path_buf(),
             n_threads: opts.n_threads,
@@ -138,10 +152,7 @@ impl WhisperEngine {
         let settings = TranscribeSettings::default();
         let mut state = self.ctx.create_state()?;
         self.decode(&mut state, &noise, &settings, &CancelToken::default(), None)?;
-        self.vad
-            .lock()
-            .unwrap()
-            .segments_from_samples(WhisperVadParams::new(), &noise)?;
+        self.vad.probs(&noise)?;
         self.prepare()
     }
 
@@ -164,13 +175,7 @@ impl WhisperEngine {
         // VAD gate: whisper never sees non-speech audio, so silence cannot
         // produce hallucinated text and long pauses are not decoded at all.
         let t = Instant::now();
-        let speech: Vec<SpeechSegment> = self
-            .vad
-            .lock()
-            .unwrap()
-            .segments_from_samples(WhisperVadParams::new(), samples)?
-            .map(|s| SpeechSegment { start_cs: s.start, end_cs: s.end })
-            .collect();
+        let speech: Vec<SpeechSegment> = vad::segments_from_probs(&self.vad.probs(samples)?);
         stats.vad = t.elapsed();
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);

@@ -33,7 +33,9 @@ Every engine/audio change should be checked with `osw bench`.
     state), `transcribe` (VAD gate → fresh `WhisperState` per recording).
     Abort/progress use raw C callbacks pointing at stack data (the
     whisper-rs `*_safe` setters leak, and the abort one is unsound).
-  - `vad.rs` speech-only stitching (port of Mac `speechOnlySamples`).
+  - `vad.rs` speech-only stitching (port of Mac `speechOnlySamples`) and
+    `segments_from_probs`, an exact Rust port of whisper.cpp's segmentation
+    (parity test in `tests/vad_parity.rs`).
   - `text.rs` segment join + cleanup + Asian autocorrect (zh/ja/ko).
   - `models.rs` catalog/defaults; `paths.rs` XDG dirs, embedded Silero VAD.
   - `settings.rs` `TranscribeSettings` (defaults match the Mac app).
@@ -109,9 +111,13 @@ apt (needs gcc-12 host compiler).
   38–111 ms of that (grows with length) → next optimization target.
 - Dev machine has no wired mic; default input fell back to a speaker
   monitor before the headset was connected (digital-silence warning added).
-- VAD costs ~26 ms per 5 s of audio → run it incrementally while recording.
+- VAD costs ~5 ms per second of audio (26 ms / 5 s, 111 ms / 14 s).
 - Rejected: shrinking `audio_ctx` to the audio length (Turbo loops/hallucinates
-  on short clips); `GGML_VK_*` toggles (no effect).
+  on short clips); `GGML_VK_*` toggles (no effect); incremental VAD during
+  recording — whisper.cpp resets the Silero LSTM state on every
+  `detect_speech` call and has no API to keep it, and re-running warm-up
+  context (up to 8 s) still changed segments by up to 6 s. Doing it right
+  needs a stateful VAD: patch whisper.cpp or implement Silero in Rust.
 
 ## Known gaps vs. the Mac app
 
@@ -125,9 +131,9 @@ apt (needs gcc-12 host compiler).
 ## Roadmap
 
 1. Phase 1 (core loop): DONE in code — daemon, triggers, paste, overlay,
-   tray, config, IPC. Verified by the user: tray toggle → record →
-   transcribe. Pending: run VAD incrementally during recording (saves
-   40–110 ms); user check of hotkey, paste and overlay.
+   tray, config, IPC. Verified by the user (2026-10-18): Right Ctrl tap/hold,
+   tray toggle, overlay, paste + clipboard restore. Optional speed item: a
+   stateful VAD to move 40–110 ms off the stop→text path.
 2. Phase 2: GTK history (SQLite FTS5, playback, re-transcribe, retention),
    drag-and-drop queue, onboarding, model downloads, streaming transcription.
 3. Phase 3: Wayland (portal shortcuts, libei/wtype, layer-shell), vocabulary
