@@ -19,7 +19,6 @@ pub enum TrayStatus {
 pub enum TrayCmd {
     Toggle,
     SelectMicrophone(Option<String>),
-    OpenWindow,
     OpenSettings,
     Quit,
 }
@@ -108,13 +107,6 @@ impl ksni::Tray for Tray {
                 label: if recording { "Stop recording" } else { "Start recording" }.into(),
                 icon_name: if recording { "media-playback-stop" } else { "media-record" }.into(),
                 activate: Box::new(|t: &mut Self| (t.on_cmd)(TrayCmd::Toggle)),
-                ..Default::default()
-            }
-            .into(),
-            StandardItem {
-                label: "Open OpenSuperWhisper…".into(),
-                icon_name: "view-list".into(),
-                activate: Box::new(|t: &mut Self| (t.on_cmd)(TrayCmd::OpenWindow)),
                 ..Default::default()
             }
             .into(),

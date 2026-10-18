@@ -200,7 +200,6 @@ impl App {
                         self.capture.set_target(name);
                         self.save_config();
                     }
-                    TrayCmd::OpenWindow => open_window(&[]),
                     TrayCmd::OpenSettings => open_window(&["--settings"]),
                     TrayCmd::Quit => return Ok(()),
                 },

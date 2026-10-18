@@ -53,8 +53,8 @@ osw download "Turbo V3 small"  # ggml-large-v3-turbo-q5_0.bin
 osw-daemon &                   # also starts automatically on next login
 ```
 
-Open the window from the tray ("Open OpenSuperWhisper…", "Settings…") or the
-applications menu. Changes in the window apply immediately. Settings are
+Open the window from the tray ("Settings…", which also has the History tab)
+or the applications menu. Changes in the window apply immediately. Settings are
 stored in `~/.config/opensuperwhisper/config.toml`; after editing that file
 by hand, run `osw reload`.
 Default trigger: Right Ctrl pressed on its own — tap to start/stop, or hold
